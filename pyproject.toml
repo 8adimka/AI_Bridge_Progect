@@ -1,0 +1,25 @@
+[project]
+name = "gptbridge-progect"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Vadim Medintsev",email = "m8adimka@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.119.0",
+    "uvicorn>=0.37.0",
+    "playwright>=1.46.0",
+    "python-dotenv>=1.0.0",
+    "asyncio"
+]
+
+packages = [
+  { include = "app" }
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
