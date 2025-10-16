@@ -1,5 +1,4 @@
 import asyncio
-import os
 import time
 
 from dotenv import load_dotenv
@@ -149,9 +148,11 @@ class BrowserClient:
                 "input[type='email'], input[name='email'], input[placeholder*='email'], input[placeholder*='Email']",
                 timeout=10000,
             )
-            email = os.getenv("EMAIL_ADDRESS")
+
+            # Запрашиваем email у пользователя
+            email = input("Введите ваш логин/email для доступа к аккаунту GPT: ")
             if not email:
-                raise ValueError("EMAIL_ADDRESS не найден в переменных окружения")
+                raise ValueError("Email не может быть пустым")
 
             await email_input.fill(email)
             print("Введен email")
@@ -179,13 +180,14 @@ class BrowserClient:
                         selector, timeout=3000
                     )
                     # Проверяем, что кнопка видима и кликабельна
-                    is_visible = await continue_button.is_visible()
-                    is_enabled = await continue_button.is_enabled()
-                    if is_visible and is_enabled:
-                        print(f"Найдена кнопка Continue с селектором: {selector}")
-                        break
-                    else:
-                        continue_button = None
+                    if continue_button:
+                        is_visible = await continue_button.is_visible()
+                        is_enabled = await continue_button.is_enabled()
+                        if is_visible and is_enabled:
+                            print(f"Найдена кнопка Continue с селектором: {selector}")
+                            break
+                        else:
+                            continue_button = None
                 except:
                     continue
 
@@ -237,9 +239,12 @@ class BrowserClient:
                 except:
                     raise Exception("Не удалось найти поле ввода пароля")
 
-            password = os.getenv("PASSWORD")
+            # Запрашиваем пароль у пользователя
+            import getpass
+
+            password = getpass.getpass("Введите пароль от вашего аккаунта: ")
             if not password:
-                raise ValueError("PASSWORD не найден в переменных окружения")
+                raise ValueError("Пароль не может быть пустым")
 
             await password_input.fill(password)
             print("Введен пароль")
@@ -278,7 +283,87 @@ class BrowserClient:
             print(f"Ошибка при вводе пароля: {e}")
             return
 
+        # Проверяем, не требуется ли ввод кода подтверждения
+        await self._handle_verification_code()
+
         print("Аутентификация успешно завершена")
+
+    async def _handle_verification_code(self):
+        """Обрабатывает ввод кода подтверждения с почты, если требуется"""
+        if not self.page:
+            return
+
+        try:
+            # Проверяем, появилось ли сообщение о необходимости ввода кода
+            verification_selectors = [
+                "input[type='text'][placeholder*='Code']",
+                "input[type='text'][placeholder*='код']",
+                "input[name='code']",
+                "input[data-testid*='code']",
+                "input[placeholder*='Enter code']",
+                "input[placeholder*='Введите код']",
+            ]
+
+            code_input = None
+            for selector in verification_selectors:
+                try:
+                    code_input = await self.page.wait_for_selector(
+                        selector, timeout=5000
+                    )
+                    print(
+                        f"Найдено поле для ввода кода подтверждения с селектором: {selector}"
+                    )
+                    break
+                except:
+                    continue
+
+            if code_input:
+                # Запрашиваем код подтверждения у пользователя
+                verification_code = input(
+                    "Введите ваш код подтверждения с вашей почты: "
+                )
+                if not verification_code:
+                    print("Код подтверждения не введен, пропускаем")
+                    return
+
+                await code_input.fill(verification_code)
+                print("Введен код подтверждения")
+                await asyncio.sleep(1)
+
+                # Ищем кнопку Continue для кода подтверждения
+                continue_selectors = [
+                    "button:has-text('Continue')",
+                    "button:has-text('Продолжить')",
+                    "button[type='submit']",
+                    "button[data-testid*='continue']",
+                ]
+
+                continue_button = None
+                for selector in continue_selectors:
+                    try:
+                        continue_button = await self.page.wait_for_selector(
+                            selector, timeout=5000
+                        )
+                        print(
+                            f"Найдена кнопка Continue для кода подтверждения с селектором: {selector}"
+                        )
+                        break
+                    except:
+                        continue
+
+                if continue_button:
+                    await continue_button.click()
+                    print("Нажата кнопка Continue после кода подтверждения")
+                    await asyncio.sleep(3)  # Ждем завершения проверки
+                else:
+                    print("Кнопка Continue не найдена, пробуем нажать Enter")
+                    await code_input.press("Enter")
+                    await asyncio.sleep(3)
+
+        except Exception as e:
+            print(f"Ошибка при обработке кода подтверждения: {e}")
+            # Если не нашли поле для кода, значит он не требуется
+            pass
 
     async def send_and_get_answer(self, prompt: str) -> str:
         """Отправляет запрос и получает ответ"""
@@ -309,17 +394,17 @@ class BrowserClient:
             if not input_element:
                 return "Ошибка: не найдено поле ввода"
 
-            # Очищаем поле и вводим текст - используем простой надежный метод
+            # Оптимизированный процесс ввода текста
             await input_element.click()
-            await asyncio.sleep(1)  # Ждем активации поля
+            await asyncio.sleep(0.3)  # Уменьшили ожидание активации поля
 
             # Очищаем поле стандартным способом
             await input_element.fill("")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)  # Уменьшили паузу после очистки
 
-            # Вводим текст с задержкой для имитации человеческого ввода
-            await input_element.type(prompt, delay=50)
-            await asyncio.sleep(0.5)
+            # Вводим текст с минимальной задержкой для скорости
+            await input_element.type(prompt, delay=20)  # Уменьшили задержку ввода
+            await asyncio.sleep(0.2)  # Уменьшили паузу после ввода
 
             # Отправляем запрос (пробуем разные способы)
             try:
@@ -369,57 +454,78 @@ class BrowserClient:
 
         max_wait_time = 120  # Максимальное время ожидания в секундах
         start_time = time.time()
+        last_typing_check = 0
+        typing_check_interval = 0.3  # Проверяем индикатор каждые 0.3 секунды
 
         while time.time() - start_time < max_wait_time:
             try:
-                # Проверяем, что генерация завершена (нет индикатора typing)
-                typing_indicators = await self.page.query_selector_all(
-                    '[data-testid*="typing"], .typing-indicator, [class*="typing"]'
-                )
+                current_time = time.time()
 
-                if not typing_indicators:
-                    # Ищем ответы ChatGPT разными способами
-                    answer_selectors = [
-                        '[data-testid*="conversation-turn"] [data-message-author-role="assistant"]',
-                        '[data-message-author-role="assistant"]',
-                        ".markdown.prose",
-                        '[class*="message"]:not([data-message-author-role="user"])',
-                        ".result-streaming",
-                        ".whitespace-pre-wrap",
-                    ]
+                # Проверяем индикатор typing только через определенные интервалы
+                if current_time - last_typing_check >= typing_check_interval:
+                    # Проверяем, что генерация завершена (нет индикатора typing)
+                    typing_indicators = await self.page.query_selector_all(
+                        '[data-testid*="typing"], .typing-indicator, [class*="typing"]'
+                    )
+                    last_typing_check = current_time
 
-                    for selector in answer_selectors:
-                        try:
-                            messages = await self.page.query_selector_all(selector)
-                            if messages:
-                                last_message = messages[-1]
-                                text_content = await last_message.text_content()
-                                if text_content and text_content.strip():
+                    if typing_indicators:
+                        # Если есть индикатор, ждем немного и продолжаем
+                        await asyncio.sleep(0.2)
+                        continue
+
+                # Если нет индикатора typing, ищем ответ
+                # Оптимизированный поиск ответа - сначала пробуем самые надежные селекторы
+                answer_selectors = [
+                    '[data-testid*="conversation-turn"] [data-message-author-role="assistant"]',
+                    '[data-message-author-role="assistant"]',
+                    ".markdown.prose",
+                ]
+
+                for selector in answer_selectors:
+                    try:
+                        messages = await self.page.query_selector_all(selector)
+                        if messages:
+                            last_message = messages[-1]
+                            text_content = await last_message.text_content()
+                            if text_content and text_content.strip():
+                                # Дополнительная проверка: убедимся, что это действительно новый ответ
+                                answer_text = text_content.strip()
+                                if len(answer_text) > 10:  # Минимальная длина ответа
                                     print(f"Найден ответ с селектором: {selector}")
-                                    return text_content.strip()
-                        except:
-                            continue
+                                    return answer_text
+                    except:
+                        continue
 
-                    # Альтернативный способ: ищем последний добавленный элемент
-                    all_elements = await self.page.query_selector_all("div, p, span")
-                    if all_elements:
-                        # Берем последние несколько элементов и проверяем их текст
-                        for element in reversed(all_elements[-10:]):
-                            try:
-                                text_content = await element.text_content()
-                                if (
-                                    text_content and len(text_content.strip()) > 10
-                                ):  # Минимальная длина ответа
-                                    print("Найден ответ через альтернативный метод")
-                                    return text_content.strip()
-                            except:
-                                continue
+                # Если не нашли основными селекторами, пробуем альтернативные
+                alternative_selectors = [
+                    '[class*="message"]:not([data-message-author-role="user"])',
+                    ".result-streaming",
+                    ".whitespace-pre-wrap",
+                ]
 
-                await asyncio.sleep(1)
+                for selector in alternative_selectors:
+                    try:
+                        messages = await self.page.query_selector_all(selector)
+                        if messages:
+                            last_message = messages[-1]
+                            text_content = await last_message.text_content()
+                            if text_content and text_content.strip():
+                                answer_text = text_content.strip()
+                                if len(answer_text) > 10:
+                                    print(
+                                        f"Найден ответ с альтернативным селектором: {selector}"
+                                    )
+                                    return answer_text
+                    except:
+                        continue
+
+                # Если ответ не найден, ждем немного и продолжаем
+                await asyncio.sleep(0.2)
 
             except Exception as e:
                 print(f"Ошибка при ожидании ответа: {e}")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.3)
 
         return "Таймаут ожидания ответа"
 
