@@ -1,5 +1,5 @@
 import asyncio
-import time
+import os
 
 from dotenv import load_dotenv
 from playwright.async_api import Page, async_playwright
@@ -17,6 +17,18 @@ class BrowserClient:
         self.browser = None
         self.page: Page | None = None
         self.context = None
+        self.auth_data = {
+            "email": os.getenv("EMAIL_ADDRESS", ""),
+            "password": os.getenv("PASSWORD", ""),
+            "verification_code": "",
+        }
+        self.auth_status = {
+            "status": "not_authenticated",
+            "email_provided": False,
+            "password_provided": False,
+            "code_provided": False,
+            "browser_initialized": False,
+        }
 
     async def initialize(self):
         """Инициализация браузера"""
@@ -47,6 +59,8 @@ class BrowserClient:
             });
         """)
 
+        self.auth_status["browser_initialized"] = True
+
     async def open_chatgpt(self):
         """Открывает ChatGPT и ждет загрузки"""
         if not self.page:
@@ -57,20 +71,8 @@ class BrowserClient:
         # Ждем загрузки страницы
         await self.page.wait_for_load_state("networkidle")
 
-        # Обрабатываем cookie-окно если оно появилось
-        try:
-            accept_button = await self.page.wait_for_selector(
-                "button:has-text('Accept all'), button:has-text('Принять все')",
-                timeout=5000,
-            )
-            await accept_button.click()
-            print("Cookie-окно обработано")
-            await asyncio.sleep(2)  # Ждем после клика
-        except:
-            print("Cookie-окно не найдено или уже обработано")
-
-        # Выполняем аутентификацию
-        await self._authenticate()
+        # Обрабатываем все возможные всплывающие окна
+        await self._handle_popups()
 
         # Пробуем разные селекторы для поля ввода
         selectors = [
@@ -102,60 +104,171 @@ class BrowserClient:
                 await self.page.screenshot(path="chatgpt_debug.png")
                 raise
 
-        print("ChatGPT успешно загружен и аутентифицирован")
+        print("ChatGPT успешно загружен")
 
-    async def _authenticate(self):
-        """Выполняет аутентификацию в ChatGPT"""
+    async def _handle_popups(self):
+        """Обрабатывает все возможные всплывающие окна, включая кнопки Enable и крестики"""
         if not self.page:
-            raise RuntimeError("Browser page is not initialized")
-
-        print("Начинаем процесс аутентификации...")
-
-        # Ищем кнопку Log In
-        login_selectors = [
-            "button:has-text('Log in')",
-            "button:has-text('Войти')",
-            "a:has-text('Log in')",
-            "a:has-text('Войти')",
-            "[data-testid='mobile-login-button']",
-            "[data-testid='login-button']",
-            "button[type='button']:has-text('Log in')",
-            "button[type='button']:has-text('Войти')",
-        ]
-
-        login_button = None
-        for selector in login_selectors:
-            try:
-                login_button = await self.page.wait_for_selector(selector, timeout=5000)
-                print(f"Найдена кнопка Log In с селектором: {selector}")
-                break
-            except:
-                continue
-
-        if login_button:
-            await login_button.click()
-            print("Нажата кнопка Log In")
-            await asyncio.sleep(3)  # Ждем загрузки страницы аутентификации
-        else:
-            print(
-                "Кнопка Log In не найдена. Возможно, пользователь уже аутентифицирован"
-            )
             return
 
-        # Вводим email на странице аутентификации
+        print("Проверяем наличие всплывающих окон...")
+
+        # Список селекторов для различных типов всплывающих окон (с приоритетом)
+        popup_selectors = [
+            # Cookie и согласия (высший приоритет)
+            "button:has-text('Accept all')",
+            "button:has-text('Принять все')",
+            "button:has-text('Accept cookies')",
+            "button:has-text('Принять cookies')",
+            "button:has-text('I agree')",
+            "button:has-text('Я согласен')",
+            # Кнопки Enable и активации
+            "button:has-text('Enable')",
+            "button:has-text('Включить')",
+            "button:has-text('Activate')",
+            "button:has-text('Активировать')",
+            "button:has-text('Allow')",
+            "button:has-text('Разрешить')",
+            "button:has-text('Accept')",
+            "button:has-text('Принять')",
+            "button:has-text('Agree')",
+            "button:has-text('Согласиться')",
+            # Кнопки закрытия (крестики)
+            "button[aria-label*='close']",
+            "button[aria-label*='закрыть']",
+            "button[title*='close']",
+            "button[title*='закрыть']",
+            "[data-testid*='close']",
+            "button:has-text('×')",
+            "button:has-text('✕')",
+            "button:has-text('X')",
+            # Другие кнопки
+            "button:has-text('Got it')",
+            "button:has-text('Понятно')",
+            "button:has-text('OK')",
+            "button:has-text('ОК')",
+            "button:has-text('Dismiss')",
+            "button:has-text('Отклонить')",
+            "button:has-text('Not now')",
+            "button:has-text('Не сейчас')",
+            "button:has-text('Later')",
+            "button:has-text('Позже')",
+        ]
+
+        handled_popups = 0
+        max_attempts = 2  # Уменьшено количество попыток
+
+        for attempt in range(max_attempts):
+            popup_found = False
+
+            for selector in popup_selectors:
+                try:
+                    # Ищем элемент с очень коротким таймаутом
+                    element = await self.page.wait_for_selector(selector, timeout=500)
+
+                    if element:
+                        is_visible = await element.is_visible()
+                        is_enabled = await element.is_enabled()
+
+                        if is_visible and is_enabled:
+                            print(f"Найдено всплывающее окно с селектором: {selector}")
+
+                            # Кликаем на элемент
+                            await element.click()
+                            print(f"Нажата кнопка: {selector}")
+                            handled_popups += 1
+                            popup_found = True
+
+                            # Короткая пауза после клика
+                            await asyncio.sleep(0.3)
+
+                            # Прерываем цикл по селекторам и начинаем заново
+                            break
+
+                except Exception:
+                    # Игнорируем ошибки поиска элементов
+                    continue
+
+            # Если в этой попытке не нашли поп-апов, выходим
+            if not popup_found:
+                break
+
+        if handled_popups > 0:
+            print(f"✅ Обработано всплывающих окон: {handled_popups}")
+        else:
+            print("ℹ️ Всплывающие окна не найдены")
+
+    async def perform_authentication(self):
+        """Выполняет полную аутентификацию с использованием данных из .env"""
+        print("🔄 Выполняю автоматическую аутентификацию...")
+
+        if not self.auth_data["email"] or not self.auth_data["password"]:
+            print("❌ Email или пароль не установлены в переменных окружения")
+            return False
+
+        try:
+            # Ищем кнопку Log In
+            login_selectors = [
+                "button:has-text('Log in')",
+                "button:has-text('Войти')",
+                "a:has-text('Log in')",
+                "a:has-text('Войти')",
+                "[data-testid='mobile-login-button']",
+                "[data-testid='login-button']",
+            ]
+
+            login_button = None
+            for selector in login_selectors:
+                try:
+                    login_button = await self.page.wait_for_selector(
+                        selector, timeout=3000
+                    )
+                    if login_button:
+                        print(f"✅ Найдена кнопка Log In с селектором: {selector}")
+                        break
+                except:
+                    continue
+
+            if login_button:
+                await login_button.click()
+                print("✅ Нажата кнопка Log In")
+                await asyncio.sleep(1)
+            else:
+                print(
+                    "ℹ️ Кнопка Log In не найдена. Возможно, пользователь уже аутентифицирован"
+                )
+                self.auth_status["status"] = "completed"
+                return True
+
+            # Вводим email
+            if await self._provide_email():
+                # Вводим пароль
+                if await self._provide_password():
+                    # Обрабатываем код подтверждения, если требуется
+                    await self._handle_verification_code()
+                    self.auth_status["status"] = "completed"
+                    return True
+
+            return False
+
+        except Exception as e:
+            print(f"❌ Ошибка при аутентификации: {e}")
+            return False
+
+    async def _provide_email(self):
+        """Вводит email на странице аутентификации"""
         try:
             email_input = await self.page.wait_for_selector(
                 "input[type='email'], input[name='email'], input[placeholder*='email'], input[placeholder*='Email']",
                 timeout=10000,
             )
 
-            # Запрашиваем email у пользователя
-            email = input("Введите ваш логин/email для доступа к аккаунту GPT: ")
-            if not email:
-                raise ValueError("Email не может быть пустым")
+            if not self.auth_data["email"]:
+                print("❌ Email не установлен")
+                return False
 
-            await email_input.fill(email)
-            print("Введен email")
+            await email_input.fill(self.auth_data["email"])
+            print("✅ Введен email")
             await asyncio.sleep(1)
 
             # Ищем кнопку Continue под полем ввода email
@@ -184,7 +297,9 @@ class BrowserClient:
                         is_visible = await continue_button.is_visible()
                         is_enabled = await continue_button.is_enabled()
                         if is_visible and is_enabled:
-                            print(f"Найдена кнопка Continue с селектором: {selector}")
+                            print(
+                                f"✅ Найдена кнопка Continue с селектором: {selector}"
+                            )
                             break
                         else:
                             continue_button = None
@@ -193,16 +308,20 @@ class BrowserClient:
 
             if continue_button:
                 await continue_button.click()
-                print("Нажата кнопка Continue после email")
-                await asyncio.sleep(3)  # Ждем загрузки страницы пароля
+                print("✅ Нажата кнопка Continue после email")
+                await asyncio.sleep(1)
+                self.auth_status["email_provided"] = True
+                return True
             else:
-                print("Кнопка Continue не найдена или не кликабельна")
-                return
-        except Exception as e:
-            print(f"Ошибка при вводе email: {e}")
-            return
+                print("❌ Кнопка Continue не найдена или не кликабельна")
+                return False
 
-        # Вводим пароль
+        except Exception as e:
+            print(f"❌ Ошибка при вводе email: {e}")
+            return False
+
+    async def _provide_password(self):
+        """Вводит пароль на странице аутентификации"""
         try:
             # Добавляем больше селекторов для поиска поля пароля
             password_selectors = [
@@ -223,7 +342,7 @@ class BrowserClient:
                     password_input = await self.page.wait_for_selector(
                         selector, timeout=5000
                     )
-                    print(f"Найдено поле пароля с селектором: {selector}")
+                    print(f"✅ Найдено поле пароля с селектором: {selector}")
                     break
                 except:
                     continue
@@ -235,19 +354,17 @@ class BrowserClient:
                         "xpath=//input[@type='password' and not(@aria-hidden='true')]",
                         timeout=5000,
                     )
-                    print("Найдено поле пароля через XPath")
+                    print("✅ Найдено поле пароля через XPath")
                 except:
-                    raise Exception("Не удалось найти поле ввода пароля")
+                    print("❌ Не удалось найти поле ввода пароля")
+                    return False
 
-            # Запрашиваем пароль у пользователя
-            import getpass
+            if not self.auth_data["password"]:
+                print("❌ Пароль не установлен")
+                return False
 
-            password = getpass.getpass("Введите пароль от вашего аккаунта: ")
-            if not password:
-                raise ValueError("Пароль не может быть пустым")
-
-            await password_input.fill(password)
-            print("Введен пароль")
+            await password_input.fill(self.auth_data["password"])
+            print("✅ Введен пароль")
             await asyncio.sleep(1)
 
             # Ищем кнопку Continue для пароля
@@ -265,33 +382,31 @@ class BrowserClient:
                     continue_button = await self.page.wait_for_selector(
                         selector, timeout=5000
                     )
-                    print(f"Найдена кнопка Continue с селектором: {selector}")
+                    print(f"✅ Найдена кнопка Continue с селектором: {selector}")
                     break
                 except:
                     continue
 
             if continue_button:
                 await continue_button.click()
-                print("Нажата кнопка Continue после пароля")
+                print("✅ Нажата кнопка Continue после пароля")
                 await asyncio.sleep(5)  # Ждем завершения аутентификации
             else:
-                print("Кнопка Continue не найдена, пробуем нажать Enter")
+                print("❌ Кнопка Continue не найдена, пробуем нажать Enter")
                 await password_input.press("Enter")
                 await asyncio.sleep(5)
 
+            self.auth_status["password_provided"] = True
+            return True
+
         except Exception as e:
-            print(f"Ошибка при вводе пароля: {e}")
-            return
-
-        # Проверяем, не требуется ли ввод кода подтверждения
-        await self._handle_verification_code()
-
-        print("Аутентификация успешно завершена")
+            print(f"❌ Ошибка при вводе пароля: {e}")
+            return False
 
     async def _handle_verification_code(self):
         """Обрабатывает ввод кода подтверждения с почты, если требуется"""
         if not self.page:
-            return
+            return False
 
         try:
             # Проверяем, появилось ли сообщение о необходимости ввода кода
@@ -311,23 +426,20 @@ class BrowserClient:
                         selector, timeout=5000
                     )
                     print(
-                        f"Найдено поле для ввода кода подтверждения с селектором: {selector}"
+                        f"✅ Найдено поле для ввода кода подтверждения с селектором: {selector}"
                     )
                     break
                 except:
                     continue
 
             if code_input:
-                # Запрашиваем код подтверждения у пользователя
-                verification_code = input(
-                    "Введите ваш код подтверждения с вашей почты: "
-                )
-                if not verification_code:
-                    print("Код подтверждения не введен, пропускаем")
-                    return
+                if not self.auth_data["verification_code"]:
+                    print("ℹ️ Требуется код подтверждения, но он не установлен")
+                    self.auth_status["status"] = "waiting_code"
+                    return False
 
-                await code_input.fill(verification_code)
-                print("Введен код подтверждения")
+                await code_input.fill(self.auth_data["verification_code"])
+                print("✅ Введен код подтверждения")
                 await asyncio.sleep(1)
 
                 # Ищем кнопку Continue для кода подтверждения
@@ -345,7 +457,7 @@ class BrowserClient:
                             selector, timeout=5000
                         )
                         print(
-                            f"Найдена кнопка Continue для кода подтверждения с селектором: {selector}"
+                            f"✅ Найдена кнопка Continue для кода подтверждения с селектором: {selector}"
                         )
                         break
                     except:
@@ -353,20 +465,140 @@ class BrowserClient:
 
                 if continue_button:
                     await continue_button.click()
-                    print("Нажата кнопка Continue после кода подтверждения")
+                    print("✅ Нажата кнопка Continue после кода подтверждения")
                     await asyncio.sleep(3)  # Ждем завершения проверки
                 else:
-                    print("Кнопка Continue не найдена, пробуем нажать Enter")
+                    print("❌ Кнопка Continue не найдена, пробуем нажать Enter")
                     await code_input.press("Enter")
                     await asyncio.sleep(3)
 
+                self.auth_status["code_provided"] = True
+                self.auth_status["status"] = "completed"
+                print("✅ Код подтверждения успешно обработан, авторизация завершена!")
+                return True
+
+            # Если поле для кода не найдено, значит код не требуется
+            return True
+
         except Exception as e:
-            print(f"Ошибка при обработке кода подтверждения: {e}")
-            # Если не нашли поле для кода, значит он не требуется
-            pass
+            print(f"ℹ️ Ошибка при обработке кода подтверждения: {e}")
+            return False
+
+    async def set_verification_code(self, code: str):
+        """Устанавливает код подтверждения для аутентификации"""
+        self.auth_data["verification_code"] = code
+
+    async def set_auth_data(
+        self, email: str = None, password: str = None, verification_code: str = None
+    ):
+        """Устанавливает данные для аутентификации"""
+        if email is not None:
+            self.auth_data["email"] = email
+        if password is not None:
+            self.auth_data["password"] = password
+        if verification_code is not None:
+            self.auth_data["verification_code"] = verification_code
+
+    async def start_authentication_until_code(self):
+        """Выполняет авторизацию до этапа получения кода подтверждения"""
+        print("🔄 Начинаю авторизацию до этапа кода подтверждения...")
+
+        if not self.auth_data["email"] or not self.auth_data["password"]:
+            print("❌ Email или пароль не установлены")
+            return False
+
+        try:
+            # Ищем кнопку Log In
+            login_selectors = [
+                "button:has-text('Log in')",
+                "button:has-text('Войти')",
+                "a:has-text('Log in')",
+                "a:has-text('Войти')",
+                "[data-testid='mobile-login-button']",
+                "[data-testid='login-button']",
+            ]
+
+            login_button = None
+            for selector in login_selectors:
+                try:
+                    login_button = await self.page.wait_for_selector(
+                        selector, timeout=3000
+                    )
+                    if login_button:
+                        print(f"✅ Найдена кнопка Log In с селектором: {selector}")
+                        break
+                except:
+                    continue
+
+            if login_button:
+                await login_button.click()
+                print("✅ Нажата кнопка Log In")
+                await asyncio.sleep(1)
+            else:
+                print(
+                    "ℹ️ Кнопка Log In не найдена. Возможно, пользователь уже аутентифицирован"
+                )
+                self.auth_status["status"] = "completed"
+                return True
+
+            # Вводим email
+            if await self._provide_email():
+                # Вводим пароль
+                if await self._provide_password():
+                    # Проверяем, появилось ли поле для кода подтверждения
+                    code_required = await self._check_if_code_required()
+                    if code_required:
+                        print("📧 Требуется код подтверждения с почты")
+                        print("⏳ Ожидаем код через API эндпоинт /auth/code")
+                        self.auth_status["status"] = "waiting_code"
+                        return True
+                    else:
+                        # Если код не требуется, авторизация завершена
+                        self.auth_status["status"] = "completed"
+                        print("✅ Авторизация завершена успешно!")
+                        return True
+
+            return False
+
+        except Exception as e:
+            print(f"❌ Ошибка при авторизации: {e}")
+            return False
+
+    async def _check_if_code_required(self):
+        """Проверяет, требуется ли ввод кода подтверждения"""
+        if not self.page:
+            return False
+
+        try:
+            # Проверяем наличие поля для ввода кода
+            verification_selectors = [
+                "input[type='text'][placeholder*='Code']",
+                "input[type='text'][placeholder*='код']",
+                "input[name='code']",
+                "input[data-testid*='code']",
+                "input[placeholder*='Enter code']",
+                "input[placeholder*='Введите код']",
+            ]
+
+            for selector in verification_selectors:
+                try:
+                    code_input = await self.page.wait_for_selector(
+                        selector, timeout=3000
+                    )
+                    if code_input:
+                        print(f"✅ Найдено поле для кода подтверждения: {selector}")
+                        return True
+                except:
+                    continue
+
+            return False
+
+        except Exception as e:
+            print(f"ℹ️ Ошибка при проверке кода подтверждения: {e}")
+            return False
 
     async def send_and_get_answer(self, prompt: str) -> str:
-        """Отправляет запрос и получает ответ (исправленная версия)"""
+        """Отправляет запрос и получает ответ"""
         if not self.page:
             return "Ошибка: браузер не инициализирован"
 
@@ -429,7 +661,9 @@ class BrowserClient:
         return None
 
     async def _wait_for_response_complete(self):
-        """Ждет окончания генерации ответа и возвращает текст (оптимизированная версия)"""
+        """Ждет окончания генерации ответа и возвращает текст"""
+        import time
+
         if not self.page:
             return "Ошибка: браузер не инициализирован"
 
@@ -543,30 +777,13 @@ class BrowserClient:
         except Exception:
             return False
 
+    async def get_auth_status(self):
+        """Возвращает статус аутентификации"""
+        return self.auth_status
+
     async def close(self):
         """Закрывает браузер"""
-        if self.context:
-            await self.context.close()
         if self.browser:
             await self.browser.close()
         if self.playwright:
             await self.playwright.stop()
-
-
-# Пример использования
-async def main():
-    client = BrowserClient()
-    try:
-        await client.initialize()
-        await client.open_chatgpt()
-
-        # Тестовый запрос
-        answer = await client.send_and_get_answer("Напиши короткий рассказ про кота")
-        print("Ответ:", answer)
-
-    finally:
-        await client.close()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

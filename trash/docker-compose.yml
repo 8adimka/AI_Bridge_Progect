@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  gptbridge:
+    build: .
+    ports:
+      - "8010:8010"
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      # Учетные данные для ChatGPT (замените на свои)
+      - CHATGPT_EMAIL=your_email@example.com
+      - CHATGPT_PASSWORD=your_password
+      # Опционально: код подтверждения, если требуется
+      # - CHATGPT_VERIFICATION_CODE=123456
+    restart: unless-stopped

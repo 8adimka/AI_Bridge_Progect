@@ -12,7 +12,8 @@ dependencies = [
     "uvicorn>=0.37.0",
     "playwright>=1.46.0",
     "python-dotenv>=1.0.0",
-    "aiohttp>=3.9.0"
+    "aiohttp>=3.9.0",
+    "python-telegram-bot>=21.0"
 ]
 
 packages = [
