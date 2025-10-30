@@ -24,17 +24,13 @@ class ChatGPTBridgeService:
 
         return await self.browser.send_and_get_answer(prompt)
 
-    async def authenticate(
-        self, email: str, password: str, verification_code: str = None
-    ) -> bool:
+    async def authenticate(self, email: str, password: str) -> bool:
         """Выполняет аутентификацию"""
         if not self._initialized:
             await self.initialize()
 
         # Устанавливаем данные для аутентификации
-        await self.browser.set_auth_data(
-            email=email, password=password, verification_code=verification_code
-        )
+        await self.browser.set_auth_data(email=email, password=password)
 
         # Выполняем аутентификацию
         return await self.browser.perform_authentication()

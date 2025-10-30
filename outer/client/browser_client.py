@@ -1,5 +1,6 @@
 import asyncio
 import os
+from typing import Optional
 
 from dotenv import load_dotenv
 from playwright.async_api import Page, async_playwright
@@ -86,16 +87,16 @@ class BrowserClient:
 
         for selector in selectors:
             try:
-                await self.page.wait_for_selector(selector, timeout=10000)
+                await self.page.wait_for_selector(selector, timeout=3000)
                 print(f"Найден элемент с селектором: {selector}")
                 break
-            except:
+            except Exception:
                 continue
         else:
             # Если не нашли стандартные селекторы, попробуем найти любой интерактивный элемент
             try:
                 await self.page.wait_for_selector(
-                    "button, input, textarea", timeout=10000
+                    "button, input, textarea", timeout=3000
                 )
                 print("Найден интерактивный элемент")
             except Exception as e:
@@ -202,6 +203,9 @@ class BrowserClient:
         """Выполняет полную аутентификацию с использованием данных из .env"""
         print("🔄 Выполняю автоматическую аутентификацию...")
 
+        if not self.page:
+            raise RuntimeError("Browser page is not initialized")
+
         if not self.auth_data["email"] or not self.auth_data["password"]:
             print("❌ Email или пароль не установлены в переменных окружения")
             return False
@@ -221,12 +225,12 @@ class BrowserClient:
             for selector in login_selectors:
                 try:
                     login_button = await self.page.wait_for_selector(
-                        selector, timeout=3000
+                        selector, timeout=2000
                     )
                     if login_button:
                         print(f"✅ Найдена кнопка Log In с селектором: {selector}")
                         break
-                except:
+                except Exception:
                     continue
 
             if login_button:
@@ -256,6 +260,9 @@ class BrowserClient:
             return False
 
     async def _provide_email(self):
+        if not self.page:
+            raise RuntimeError("Browser page is not initialized")
+
         """Вводит email на странице аутентификации"""
         try:
             email_input = await self.page.wait_for_selector(
@@ -263,7 +270,7 @@ class BrowserClient:
                 timeout=10000,
             )
 
-            if not self.auth_data["email"]:
+            if not self.auth_data["email"] or not email_input:
                 print("❌ Email не установлен")
                 return False
 
@@ -303,7 +310,7 @@ class BrowserClient:
                             break
                         else:
                             continue_button = None
-                except:
+                except Exception:
                     continue
 
             if continue_button:
@@ -337,14 +344,19 @@ class BrowserClient:
             ]
 
             password_input = None
+
+            if not self.page:
+                print("❌ Page object is not initialized")
+                return False
+
             for selector in password_selectors:
                 try:
                     password_input = await self.page.wait_for_selector(
-                        selector, timeout=5000
+                        selector, timeout=3000
                     )
                     print(f"✅ Найдено поле пароля с селектором: {selector}")
                     break
-                except:
+                except Exception:
                     continue
 
             if not password_input:
@@ -352,14 +364,14 @@ class BrowserClient:
                 try:
                     password_input = await self.page.wait_for_selector(
                         "xpath=//input[@type='password' and not(@aria-hidden='true')]",
-                        timeout=5000,
+                        timeout=3000,
                     )
                     print("✅ Найдено поле пароля через XPath")
-                except:
+                except Exception:
                     print("❌ Не удалось найти поле ввода пароля")
                     return False
 
-            if not self.auth_data["password"]:
+            if not self.auth_data["password"] or not password_input:
                 print("❌ Пароль не установлен")
                 return False
 
@@ -380,11 +392,11 @@ class BrowserClient:
             for selector in continue_selectors:
                 try:
                     continue_button = await self.page.wait_for_selector(
-                        selector, timeout=5000
+                        selector, timeout=3000
                     )
                     print(f"✅ Найдена кнопка Continue с селектором: {selector}")
                     break
-                except:
+                except Exception:
                     continue
 
             if continue_button:
@@ -423,13 +435,13 @@ class BrowserClient:
             for selector in verification_selectors:
                 try:
                     code_input = await self.page.wait_for_selector(
-                        selector, timeout=5000
+                        selector, timeout=3000
                     )
                     print(
                         f"✅ Найдено поле для ввода кода подтверждения с селектором: {selector}"
                     )
                     break
-                except:
+                except Exception:
                     continue
 
             if code_input:
@@ -460,17 +472,17 @@ class BrowserClient:
                             f"✅ Найдена кнопка Continue для кода подтверждения с селектором: {selector}"
                         )
                         break
-                    except:
+                    except Exception:
                         continue
 
                 if continue_button:
                     await continue_button.click()
                     print("✅ Нажата кнопка Continue после кода подтверждения")
-                    await asyncio.sleep(3)  # Ждем завершения проверки
+                    await asyncio.sleep(5)  # Ждем завершения проверки
                 else:
                     print("❌ Кнопка Continue не найдена, пробуем нажать Enter")
                     await code_input.press("Enter")
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(5)
 
                 self.auth_status["code_provided"] = True
                 self.auth_status["status"] = "completed"
@@ -489,7 +501,10 @@ class BrowserClient:
         self.auth_data["verification_code"] = code
 
     async def set_auth_data(
-        self, email: str = None, password: str = None, verification_code: str = None
+        self,
+        email: Optional[str] = None,
+        password: Optional[str] = None,
+        verification_code: Optional[str] = None,
     ):
         """Устанавливает данные для аутентификации"""
         if email is not None:
@@ -519,6 +534,11 @@ class BrowserClient:
             ]
 
             login_button = None
+
+            if not self.page:
+                print("❌ Page object is not initialized")
+                return False
+
             for selector in login_selectors:
                 try:
                     login_button = await self.page.wait_for_selector(
@@ -527,7 +547,7 @@ class BrowserClient:
                     if login_button:
                         print(f"✅ Найдена кнопка Log In с селектором: {selector}")
                         break
-                except:
+                except Exception:
                     continue
 
             if login_button:
@@ -588,7 +608,7 @@ class BrowserClient:
                     if code_input:
                         print(f"✅ Найдено поле для кода подтверждения: {selector}")
                         return True
-                except:
+                except Exception:
                     continue
 
             return False
@@ -634,11 +654,14 @@ class BrowserClient:
 
     async def _clear_previous_response(self):
         """Очищает область с предыдущим ответом для надежности"""
+        if not self.page:
+            return "Page object is not initialized"
+
         try:
             # Прокручиваем к низу чтобы видеть поле ввода
             await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(0.1)
-        except:
+        except Exception:
             pass
 
     async def _find_input_element(self):
@@ -651,12 +674,16 @@ class BrowserClient:
             "input[type='text']",
         ]
 
+        if not self.page:
+            print("❌ Page object is not initialized")
+            return False
+
         for selector in input_selectors:
             try:
                 element = await self.page.wait_for_selector(selector, timeout=10000)
                 print(f"Найдено поле ввода с селектором: {selector}")
                 return element
-            except:
+            except Exception:
                 continue
         return None
 
@@ -744,7 +771,7 @@ class BrowserClient:
                         text_content = await last_message.text_content()
                         if text_content and text_content.strip():
                             return text_content.strip()
-                except:
+                except Exception:
                     continue
 
             return ""
