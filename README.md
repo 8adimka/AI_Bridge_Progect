@@ -90,20 +90,20 @@ poetry run playwright install
 
 5. **Отправьте код через API:**
 
-   ```bash
-   curl -X POST http://localhost:8010/auth/code \
-     -H "Content-Type: application/json" \
-     -d '{"code": "123456"}'
-   ```
+```bash
+curl -X POST http://localhost:8010/auth/code \
+  -H "Content-Type: application/json" \
+  -d '{"code": "123456"}'
+```
 
-   **Ответ (успех):**
+**Ответ (успех):**
 
-   ```json
-   {
-     "status": "success",
-     "message": "Verification code provided successfully"
-   }
-   ```
+```json
+{
+  "status": "success",
+  "message": "Verification code provided successfully"
+}
+```
 
 6. **Проверьте, что авторизация завершена:**
 

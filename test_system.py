@@ -9,10 +9,10 @@ import sys
 
 import requests
 
-# Добавляем путь к outer_docker для импорта
-sys.path.append(os.path.join(os.path.dirname(__file__), "outer"))
+# Добавляем путь к app для импорта
+sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
 
-from outer.services.chatgpt_bridge import ChatGPTBridgeService
+from app.services.chatgpt_bridge import ChatGPTBridgeService
 
 
 async def test_system():
@@ -52,14 +52,12 @@ async def test_system():
 
                 # Запускаем API сервер в фоновом режиме
                 print("\n🚀 Запуск API сервера...")
-                from outer.server.api_server import start_api_server
+                from app.server.api_server import start_api_server
 
                 start_api_server(
                     service.handle_request,
-                    service.authenticate,
+                    service.start_authentication,
                     service.get_auth_status,
-                    service.provide_email,
-                    service.provide_password,
                     service.provide_verification_code,
                 )
 
