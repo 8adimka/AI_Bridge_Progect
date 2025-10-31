@@ -24,36 +24,9 @@ class ChatGPTBridgeService:
 
         return await self.browser.send_and_get_answer(prompt)
 
-    async def authenticate(self, email: str, password: str) -> bool:
-        """Выполняет аутентификацию"""
-        if not self._initialized:
-            await self.initialize()
-
-        # Устанавливаем данные для аутентификации
-        await self.browser.set_auth_data(email=email, password=password)
-
-        # Выполняем аутентификацию
-        return await self.browser.perform_authentication()
-
     async def get_auth_status(self):
         """Возвращает статус аутентификации"""
         return await self.browser.get_auth_status()
-
-    async def provide_email(self, email: str) -> bool:
-        """Предоставляет email для пошаговой аутентификации"""
-        if not self._initialized:
-            await self.initialize()
-
-        await self.browser.set_auth_data(email=email)
-        return await self.browser._provide_email()
-
-    async def provide_password(self, password: str) -> bool:
-        """Предоставляет пароль для пошаговой аутентификации"""
-        if not self._initialized:
-            await self.initialize()
-
-        await self.browser.set_auth_data(password=password)
-        return await self.browser._provide_password()
 
     async def provide_verification_code(self, code: str) -> bool:
         """Предоставляет код подтверждения для пошаговой аутентификации"""
@@ -68,29 +41,6 @@ class ChatGPTBridgeService:
             return True
         return success
 
-    async def auto_authenticate(self):
-        """Выполняет автоматическую аутентификацию с использованием данных из .env"""
-        print("🔄 Выполняю автоматическую аутентификацию...")
-
-        email = os.getenv("EMAIL_ADDRESS", "")
-        password = os.getenv("PASSWORD", "")
-
-        if not email or not password:
-            print("❌ Email или пароль не установлены в переменных окружения")
-            return False
-
-        print(f"🔄 Выполняю автоматическую аутентификацию для: {email}")
-
-        # Выполняем аутентификацию
-        success = await self.authenticate(email, password)
-
-        if success:
-            print("✅ Автоматическая аутентификация успешно завершена!")
-        else:
-            print("❌ Автоматическая аутентификация не удалась")
-
-        return success
-
     async def run(self):
         """Запускает сервис"""
         await self.initialize()
@@ -102,10 +52,7 @@ class ChatGPTBridgeService:
         # Запускаем API сервер, который вызывает handle_request
         start_api_server(
             self.handle_request,
-            self.authenticate,
             self.get_auth_status,
-            self.provide_email,
-            self.provide_password,
             self.provide_verification_code,
         )
 

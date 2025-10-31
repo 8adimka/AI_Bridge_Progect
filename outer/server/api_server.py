@@ -1,17 +1,17 @@
 import asyncio
+import time
+import uuid
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, Body, FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from services.request_queue import request_queue
 
 
 def start_api_server(
     handle_request_func,
-    authenticate_func=None,
     get_auth_status_func=None,
-    provide_email_func=None,
-    provide_password_func=None,
     provide_verification_code_func=None,
 ):
     app = FastAPI(title="GPT Bridge API", version="1.0.0")
@@ -48,42 +48,6 @@ def start_api_server(
                 status_code=500, content={"error": f"Internal server error: {str(e)}"}
             )
 
-    @app.post("/auth")
-    async def authenticate(request: Request):
-        """Эндпоинт для аутентификации"""
-        if not authenticate_func:
-            return JSONResponse(
-                status_code=501, content={"error": "Authentication not supported"}
-            )
-
-        try:
-            data = await request.json()
-            email = data.get("email", "")
-            password = data.get("password", "")
-            verification_code = data.get("verification_code", "")
-
-            if not email or not password:
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "Email and password are required"},
-                )
-
-            success = await authenticate_func(
-                email, password, verification_code or None
-            )
-
-            if success:
-                return {"status": "success", "message": "Authentication successful"}
-            else:
-                return JSONResponse(
-                    status_code=401, content={"error": "Authentication failed"}
-                )
-
-        except Exception as e:
-            return JSONResponse(
-                status_code=500, content={"error": f"Authentication error: {str(e)}"}
-            )
-
     @app.get("/auth/status")
     async def auth_status():
         """Эндпоинт для проверки статуса аутентификации"""
@@ -99,74 +63,6 @@ def start_api_server(
             return JSONResponse(
                 status_code=500,
                 content={"error": f"Error getting auth status: {str(e)}"},
-            )
-
-    @app.post("/auth/email")
-    async def auth_email(request: Request):
-        """Эндпоинт для предоставления email"""
-        if not provide_email_func:
-            return JSONResponse(
-                status_code=501,
-                content={"error": "Step-by-step authentication not supported"},
-            )
-
-        try:
-            data = await request.json()
-            email = data.get("email", "")
-
-            if not email:
-                return JSONResponse(
-                    status_code=400, content={"error": "Email is required"}
-                )
-
-            success = await provide_email_func(email)
-
-            if success:
-                return {"status": "success", "message": "Email provided successfully"}
-            else:
-                return JSONResponse(
-                    status_code=400, content={"error": "Failed to provide email"}
-                )
-
-        except Exception as e:
-            return JSONResponse(
-                status_code=500, content={"error": f"Error providing email: {str(e)}"}
-            )
-
-    @app.post("/auth/password")
-    async def auth_password(request: Request):
-        """Эндпоинт для предоставления пароля"""
-        if not provide_password_func:
-            return JSONResponse(
-                status_code=501,
-                content={"error": "Step-by-step authentication not supported"},
-            )
-
-        try:
-            data = await request.json()
-            password = data.get("password", "")
-
-            if not password:
-                return JSONResponse(
-                    status_code=400, content={"error": "Password is required"}
-                )
-
-            success = await provide_password_func(password)
-
-            if success:
-                return {
-                    "status": "success",
-                    "message": "Password provided successfully",
-                }
-            else:
-                return JSONResponse(
-                    status_code=400, content={"error": "Failed to provide password"}
-                )
-
-        except Exception as e:
-            return JSONResponse(
-                status_code=500,
-                content={"error": f"Error providing password: {str(e)}"},
             )
 
     @app.post("/auth/code")
@@ -216,6 +112,63 @@ def start_api_server(
             "queue_size": queue_size,
             "processing": is_processing,
         }
+
+    class ChatMessage(BaseModel):
+        role: str
+        content: str
+
+    class OpenAIChatRequest(BaseModel):
+        model: str = Field(default="gpt-4-turbo")
+        messages: list[ChatMessage]
+        temperature: float = 0.7
+        top_p: float = 1.0
+        n: int = 1
+        stream: bool = False
+
+    router = APIRouter()
+
+    @router.post("/v1/chat/completions")
+    async def openai_chat_completions(req: OpenAIChatRequest = Body(...)):
+        # Извлекаем system + user сообщение
+        system_prompt = next(
+            (m.content for m in req.messages if m.role == "system"), ""
+        )
+        user_message = next(
+            (m.content for m in reversed(req.messages) if m.role == "user"), ""
+        )
+        full_prompt = (
+            f"{system_prompt}\n{user_message}" if system_prompt else user_message
+        )
+
+        # Отправляем запрос в твою очередь
+        future = asyncio.Future()
+        await request_queue.add_request(full_prompt, lambda r: future.set_result(r))
+        answer = await future
+
+        # Рассчитываем usage
+        prompt_tokens = len(full_prompt.split())
+        completion_tokens = len(answer.split())
+
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": req.model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": answer},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+
+    app.include_router(router)
 
     # Запускаем сервер
     config = uvicorn.Config(app, host="0.0.0.0", port=8010, log_level="info")

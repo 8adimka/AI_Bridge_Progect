@@ -81,8 +81,8 @@ class RequestQueue:
                     self.queue.task_done()
                     self.current_request = None
 
-                # Небольшая пауза между запросами для стабильности
-                await asyncio.sleep(1)
+                    # Небольшая пауза между запросами для стабильности
+                    await asyncio.sleep(1)
 
         except Exception as e:
             print(f"Критическая ошибка в обработчике очереди: {e}")

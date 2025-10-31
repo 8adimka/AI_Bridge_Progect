@@ -199,66 +199,6 @@ class BrowserClient:
         else:
             print("ℹ️ Всплывающие окна не найдены")
 
-    async def perform_authentication(self):
-        """Выполняет полную аутентификацию с использованием данных из .env"""
-        print("🔄 Выполняю автоматическую аутентификацию...")
-
-        if not self.page:
-            raise RuntimeError("Browser page is not initialized")
-
-        if not self.auth_data["email"] or not self.auth_data["password"]:
-            print("❌ Email или пароль не установлены в переменных окружения")
-            return False
-
-        try:
-            # Ищем кнопку Log In
-            login_selectors = [
-                "button:has-text('Log in')",
-                "button:has-text('Войти')",
-                "a:has-text('Log in')",
-                "a:has-text('Войти')",
-                "[data-testid='mobile-login-button']",
-                "[data-testid='login-button']",
-            ]
-
-            login_button = None
-            for selector in login_selectors:
-                try:
-                    login_button = await self.page.wait_for_selector(
-                        selector, timeout=2000
-                    )
-                    if login_button:
-                        print(f"✅ Найдена кнопка Log In с селектором: {selector}")
-                        break
-                except Exception:
-                    continue
-
-            if login_button:
-                await login_button.click()
-                print("✅ Нажата кнопка Log In")
-                await asyncio.sleep(1)
-            else:
-                print(
-                    "ℹ️ Кнопка Log In не найдена. Возможно, пользователь уже аутентифицирован"
-                )
-                self.auth_status["status"] = "completed"
-                return True
-
-            # Вводим email
-            if await self._provide_email():
-                # Вводим пароль
-                if await self._provide_password():
-                    # Обрабатываем код подтверждения, если требуется
-                    await self._handle_verification_code()
-                    self.auth_status["status"] = "completed"
-                    return True
-
-            return False
-
-        except Exception as e:
-            print(f"❌ Ошибка при аутентификации: {e}")
-            return False
-
     async def _provide_email(self):
         if not self.page:
             raise RuntimeError("Browser page is not initialized")
