@@ -12,6 +12,10 @@ load_dotenv()
 CHATGPT_URL = "https://chatgpt.com/"
 WAIT_TIMEOUT = 45000  # 45 секунд в миллисекундах для Playwright
 
+# Определяем абсолютный путь к корневой папке проекта через pyproject.toml
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+COOKIES_PATH = os.path.join(PROJECT_ROOT, "cookies.json")
+
 
 class BrowserClient:
     def __init__(self):
@@ -200,7 +204,7 @@ class BrowserClient:
         try:
             email_input = await self.page.wait_for_selector(
                 "input[type='email'], input[name='email'], input[placeholder*='email'], input[placeholder*='Email']",
-                timeout=10000,
+                timeout=8000,
             )
 
             if not self.auth_data["email"] or not email_input:
@@ -230,7 +234,7 @@ class BrowserClient:
             for selector in continue_selectors:
                 try:
                     continue_button = await self.page.wait_for_selector(
-                        selector, timeout=3000
+                        selector, timeout=2000
                     )
                     # Проверяем, что кнопка видима и кликабельна
                     if continue_button:
@@ -411,11 +415,11 @@ class BrowserClient:
                 if continue_button:
                     await continue_button.click()
                     print("✅ Нажата кнопка Continue после кода подтверждения")
-                    await asyncio.sleep(5)  # Ждем завершения проверки
+                    await asyncio.sleep(4)  # Ждем завершения проверки
                 else:
                     print("❌ Кнопка Continue не найдена, пробуем нажать Enter")
                     await code_input.press("Enter")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(4)
 
                 self.auth_status["code_provided"] = True
                 self.auth_status["status"] = "completed"
@@ -637,7 +641,7 @@ class BrowserClient:
 
         for selector in input_selectors:
             try:
-                element = await self.page.wait_for_selector(selector, timeout=10000)
+                element = await self.page.wait_for_selector(selector, timeout=7000)
                 print(f"Найдено поле ввода с селектором: {selector}")
                 return element
             except Exception:
@@ -846,10 +850,10 @@ class BrowserClient:
                 "timestamp": asyncio.get_event_loop().time()
             }
             
-            with open("cookies.json", "w", encoding="utf-8") as f:
+            with open(COOKIES_PATH, "w", encoding="utf-8") as f:
                 json.dump(session_data, f, indent=2, ensure_ascii=False)
             
-            print("✅ Сессия успешно сохранена в cookies.json")
+            print(f"✅ Сессия успешно сохранена в {COOKIES_PATH}")
             return True
             
         except Exception as e:
@@ -860,12 +864,12 @@ class BrowserClient:
         """Загружает cookies и состояние браузера из файла cookies.json"""
         try:
             # Проверяем существование файла
-            if not os.path.exists("cookies.json"):
-                print("ℹ️ Файл cookies.json не найден")
+            if not os.path.exists(COOKIES_PATH):
+                print(f"ℹ️ Файл {COOKIES_PATH} не найден")
                 return False
             
             # Загружаем данные из файла
-            with open("cookies.json", "r", encoding="utf-8") as f:
+            with open(COOKIES_PATH, "r", encoding="utf-8") as f:
                 session_data = json.load(f)
             
             # Восстанавливаем статус аутентификации
@@ -881,7 +885,7 @@ class BrowserClient:
                     await self.context.add_cookies(cookies)
                     print(f"✅ Загружено {len(cookies)} cookies")
             
-            print("✅ Сессия успешно загружена из cookies.json")
+            print(f"✅ Сессия успешно загружена из {COOKIES_PATH}")
             return True
             
         except Exception as e:
@@ -891,11 +895,11 @@ class BrowserClient:
     async def is_session_valid(self) -> bool:
         """Проверяет валидность сохраненной сессии"""
         try:
-            if not os.path.exists("cookies.json"):
+            if not os.path.exists(COOKIES_PATH):
                 return False
             
             # Загружаем данные сессии
-            with open("cookies.json", "r", encoding="utf-8") as f:
+            with open(COOKIES_PATH, "r", encoding="utf-8") as f:
                 session_data = json.load(f)
             
             # Проверяем наличие необходимых данных

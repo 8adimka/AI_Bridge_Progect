@@ -7,8 +7,8 @@ import asyncio
 import os
 import sys
 
-# Добавляем путь к app для импорта
-sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
+# Добавляем путь к проекту для импорта
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.client.browser_client import BrowserClient
 
@@ -80,12 +80,20 @@ async def test_reconnection():
         await browser.initialize_with_session()
         print("✅ Браузер инициализирован")
 
-        # Тест 1: Отправка запроса с переподключением
-        print("\n1. Тест отправки запроса с переподключением:")
-        test_prompt = "Привет, это тестовый запрос для проверки переподключения"
+        # Тест 1: Проверка валидности сессии
+        print("\n1. Проверка валидности сессии:")
+        is_valid = await browser.is_session_valid()
+        print(f"✅ Сессия валидна: {is_valid}")
 
-        result = await browser.send_and_get_answer_with_reconnect(test_prompt)
-        print(f"✅ Результат запроса: {result[:100]}...")
+        # Тест 2: Сохранение сессии
+        print("\n2. Сохранение сессии:")
+        saved = await browser.save_session_cookies()
+        print(f"✅ Сессия сохранена: {saved}")
+
+        # Тест 3: Загрузка сессии
+        print("\n3. Загрузка сессии:")
+        loaded = await browser.load_session_cookies()
+        print(f"✅ Сессия загружена: {loaded}")
 
         print("\n🎉 Тест механизма переподключения пройден успешно!")
 

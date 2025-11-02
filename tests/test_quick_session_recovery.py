@@ -7,8 +7,8 @@ import asyncio
 import os
 import sys
 
-# Добавляем путь к проекту
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Добавляем путь к проекту для импорта
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.client.browser_client import BrowserClient
 

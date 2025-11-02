@@ -9,8 +9,8 @@ import sys
 
 import requests
 
-# Добавляем путь к app для импорта
-sys.path.append(os.path.join(os.path.dirname(__file__), "app"))
+# Добавляем путь к проекту для импорта
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.chatgpt_bridge import ChatGPTBridgeService
 
@@ -56,7 +56,6 @@ async def test_system():
 
                 start_api_server(
                     service.handle_request,
-                    service.start_authentication,
                     service.get_auth_status,
                     service.provide_verification_code,
                 )
@@ -75,10 +74,22 @@ async def test_system():
                     '   curl -X POST http://localhost:8010/ask -H "Content-Type: application/json" -d \'{"prompt": "Привет, как дела?"}\''
                 )
 
-                # Ждем завершения
-                print("\n⏳ Ожидаем завершения авторизации...")
-                while True:
-                    await asyncio.sleep(1)
+                # Ждем завершения авторизации (максимум 60 секунд)
+                print("\n⏳ Ожидаем завершения авторизации (максимум 60 секунд)...")
+                max_wait_time = 60
+                waited_time = 0
+                
+                while waited_time < max_wait_time:
+                    auth_status = await service.get_auth_status()
+                    if auth_status.get("status") == "completed":
+                        print("✅ Авторизация завершена успешно!")
+                        break
+                    await asyncio.sleep(2)
+                    waited_time += 2
+                    print(f"⏰ Ожидание: {waited_time}/{max_wait_time} секунд...")
+                
+                if waited_time >= max_wait_time:
+                    print("⏰ Время ожидания истекло, авторизация не завершена")
 
             else:
                 print(f"ℹ️ Текущий статус: {auth_status.get('status')}")
