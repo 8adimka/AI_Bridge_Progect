@@ -88,7 +88,7 @@ class BrowserClient:
 
         for selector in selectors:
             try:
-                await self.page.wait_for_selector(selector, timeout=3000)
+                await self.page.wait_for_selector(selector, timeout=900)
                 print(f"Найден элемент с селектором: {selector}")
                 break
             except Exception:
@@ -97,7 +97,7 @@ class BrowserClient:
             # Если не нашли стандартные селекторы, попробуем найти любой интерактивный элемент
             try:
                 await self.page.wait_for_selector(
-                    "button, input, textarea", timeout=3000
+                    "button, input, textarea", timeout=1000
                 )
                 print("Найден интерактивный элемент")
             except Exception as e:
@@ -109,13 +109,14 @@ class BrowserClient:
         print("ChatGPT успешно загружен")
 
     async def _handle_popups(self):
-        """Обрабатывает все возможные всплывающие окна, включая кнопки Enable и крестики"""
+        """Обрабатывает только настоящие всплывающие окна (cookie, согласия, активации)"""
         if not self.page:
             return
 
         print("Проверяем наличие всплывающих окон...")
 
-        # Список селекторов для различных типов всплывающих окон (с приоритетом)
+        # Список селекторов только для настоящих всплывающих окон
+        # Убраны селекторы, которые могут закрывать элементы интерфейса
         popup_selectors = [
             # Cookie и согласия (высший приоритет)
             "button:has-text('Accept all')",
@@ -135,16 +136,7 @@ class BrowserClient:
             "button:has-text('Принять')",
             "button:has-text('Agree')",
             "button:has-text('Согласиться')",
-            # Кнопки закрытия (крестики)
-            "button[aria-label*='close']",
-            "button[aria-label*='закрыть']",
-            "button[title*='close']",
-            "button[title*='закрыть']",
-            "[data-testid*='close']",
-            "button:has-text('×')",
-            "button:has-text('✕')",
-            "button:has-text('X')",
-            # Другие кнопки
+            # Другие кнопки (только для настоящих всплывающих окон)
             "button:has-text('Got it')",
             "button:has-text('Понятно')",
             "button:has-text('OK')",
@@ -158,7 +150,7 @@ class BrowserClient:
         ]
 
         handled_popups = 0
-        max_attempts = 2  # Уменьшено количество попыток
+        max_attempts = 1  # Только одна попытка для восстановленных сессий
 
         for attempt in range(max_attempts):
             popup_found = False
@@ -166,7 +158,7 @@ class BrowserClient:
             for selector in popup_selectors:
                 try:
                     # Ищем элемент с очень коротким таймаутом
-                    element = await self.page.wait_for_selector(selector, timeout=500)
+                    element = await self.page.wait_for_selector(selector, timeout=300)
 
                     if element:
                         is_visible = await element.is_visible()
@@ -293,7 +285,7 @@ class BrowserClient:
             for selector in password_selectors:
                 try:
                     password_input = await self.page.wait_for_selector(
-                        selector, timeout=3000
+                        selector, timeout=1000
                     )
                     print(f"✅ Найдено поле пароля с селектором: {selector}")
                     break
@@ -305,7 +297,7 @@ class BrowserClient:
                 try:
                     password_input = await self.page.wait_for_selector(
                         "xpath=//input[@type='password' and not(@aria-hidden='true')]",
-                        timeout=3000,
+                        timeout=1000,
                     )
                     print("✅ Найдено поле пароля через XPath")
                 except Exception:
@@ -333,7 +325,7 @@ class BrowserClient:
             for selector in continue_selectors:
                 try:
                     continue_button = await self.page.wait_for_selector(
-                        selector, timeout=3000
+                        selector, timeout=1000
                     )
                     print(f"✅ Найдена кнопка Continue с селектором: {selector}")
                     break
@@ -376,7 +368,7 @@ class BrowserClient:
             for selector in verification_selectors:
                 try:
                     code_input = await self.page.wait_for_selector(
-                        selector, timeout=3000
+                        selector, timeout=1000
                     )
                     print(
                         f"✅ Найдено поле для ввода кода подтверждения с селектором: {selector}"
@@ -407,7 +399,7 @@ class BrowserClient:
                 for selector in continue_selectors:
                     try:
                         continue_button = await self.page.wait_for_selector(
-                            selector, timeout=5000
+                            selector, timeout=1100
                         )
                         print(
                             f"✅ Найдена кнопка Continue для кода подтверждения с селектором: {selector}"
@@ -428,9 +420,21 @@ class BrowserClient:
                 self.auth_status["code_provided"] = True
                 self.auth_status["status"] = "completed"
                 print("✅ Код подтверждения успешно обработан, авторизация завершена!")
+                
+                # Ждем 2.5 секунды для завершения навигации после авторизации
+                print("⏳ Ждем завершения навигации после авторизации...")
+                await asyncio.sleep(2.5)
+                
+                # Сохраняем сессию после успешной авторизации
+                await self.save_session_cookies()
+                print("✅ Сессия сохранена после успешной авторизации")
                 return True
 
             # Если поле для кода не найдено, значит код не требуется
+            # В этом случае авторизация уже завершена, сохраняем сессию
+            self.auth_status["status"] = "completed"
+            await self.save_session_cookies()
+            print("✅ Авторизация завершена без кода подтверждения, сессия сохранена")
             return True
 
         except Exception as e:
@@ -483,7 +487,7 @@ class BrowserClient:
             for selector in login_selectors:
                 try:
                     login_button = await self.page.wait_for_selector(
-                        selector, timeout=3000
+                        selector, timeout=1000
                     )
                     if login_button:
                         print(f"✅ Найдена кнопка Log In с селектором: {selector}")
@@ -500,6 +504,10 @@ class BrowserClient:
                     "ℹ️ Кнопка Log In не найдена. Возможно, пользователь уже аутентифицирован"
                 )
                 self.auth_status["status"] = "completed"
+                
+                # Сохраняем сессию, так как пользователь уже аутентифицирован
+                await self.save_session_cookies()
+                print("✅ Пользователь уже аутентифицирован, сессия сохранена")
                 return True
 
             # Вводим email
@@ -517,6 +525,14 @@ class BrowserClient:
                         # Если код не требуется, авторизация завершена
                         self.auth_status["status"] = "completed"
                         print("✅ Авторизация завершена успешно!")
+                        
+                        # Ждем 2.5 секунды для завершения навигации после авторизации
+                        print("⏳ Ждем завершения навигации после авторизации...")
+                        await asyncio.sleep(2.5)
+                        
+                        # Сохраняем сессию после успешной авторизации
+                        await self.save_session_cookies()
+                        print("✅ Сессия сохранена после успешной авторизации")
                         return True
 
             return False
@@ -941,8 +957,7 @@ class BrowserClient:
                 
                 # Проверяем результат на ошибки
                 if "Ошибка" not in result and "Таймаут" not in result:
-                    # Сохраняем сессию после успешного запроса
-                    await self.save_session_cookies()
+                    # Возвращаем успешный результат без сохранения сессии
                     return result
                 
                 print(f"❌ Ошибка в ответе: {result}")

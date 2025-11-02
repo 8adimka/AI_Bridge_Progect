@@ -76,8 +76,12 @@ class ChatGPTBridgeService:
         await self.initialize()
         print("✅ ChatGPT Bridge Service запущен и готов к работе")
 
-        # Начинаем процесс авторизации (только до этапа получения кода)
-        await self.start_authentication()
+        # Проверяем статус аутентификации
+        auth_status = await self.get_auth_status()
+        
+        # Запускаем авторизацию только если сессия не восстановлена
+        if auth_status.get("status") != "completed":
+            await self.start_authentication()
 
         # Запускаем API сервер, который вызывает handle_request
         start_api_server(
