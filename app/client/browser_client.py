@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from typing import Optional
 
@@ -634,11 +635,13 @@ class BrowserClient:
         if not self.page:
             return "Ошибка: браузер не инициализирован"
 
-        max_wait_time = 180
+        max_wait_time = 300  # Увеличил до 5 минут для длинных ответов
         start_time = time.time()
         last_answer = ""
         stable_count = 0  # Счетчик стабильных проверок
-        required_stable = 2  # Требуется 2 стабильных проверки подряд
+        required_stable = 5  # Увеличил до 5 стабильных проверок подряд
+        max_stable_time = 10  # Максимальное время стабильности в секундах
+        last_change_time = time.time()
 
         print("Ожидаем завершения генерации ответа...")
 
@@ -651,6 +654,7 @@ class BrowserClient:
                     # Текст изменился - генерация продолжается
                     last_answer = current_answer
                     stable_count = 0
+                    last_change_time = time.time()
                     print(f"Получена часть ответа ({len(current_answer)} символов)")
                 elif current_answer and current_answer == last_answer:
                     # Текст стабилен - увеличиваем счетчик
@@ -667,27 +671,43 @@ class BrowserClient:
 
                 # Проверяем индикаторы typing как дополнительный сигнал
                 is_typing = await self._is_chatgpt_typing()
-                if not is_typing and current_answer and stable_count >= 1:
-                    # Нет индикатора typing + есть ответ + одна стабильная проверка
-                    print("Индикатор typing исчез, ответ готов!")
-                    return current_answer
+                if not is_typing and current_answer:
+                    # Нет индикатора typing + есть ответ
+                    current_time = time.time()
+                    time_since_last_change = current_time - last_change_time
+                    
+                    # Если ответ стабилен более 10 секунд и нет typing - считаем завершенным
+                    if time_since_last_change >= max_stable_time:
+                        print(f"Ответ стабилен {time_since_last_change:.1f} секунд, typing отсутствует - ответ готов!")
+                        return current_answer
+                    
+                    # Если ответ стабилен и нет typing, увеличиваем счетчик быстрее
+                    if stable_count >= 2:
+                        stable_count += 1
+                        print(f"Ускоренная проверка: стабильность {stable_count}/{required_stable}")
+                else:
+                    # Есть typing - сбрасываем счетчик стабильности
+                    if is_typing:
+                        stable_count = 0
+                        print("Обнаружен typing - генерация продолжается")
 
                 # Увеличиваем интервал проверки в зависимости от состояния
                 if not current_answer:
                     # Ответ еще не начался - проверяем реже
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1.0)
                 elif stable_count > 0:
                     # Ответ стабилен - проверяем реже
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(1.0)
                 else:
                     # Активная генерация - проверяем чаще
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.5)
 
             except Exception as e:
                 print(f"Ошибка при ожидании ответа: {e}")
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
 
         # Если вышли по таймауту, возвращаем последний найденный ответ
+        print(f"⚠️ Достигнут таймаут ожидания ответа ({max_wait_time} секунд)")
         return last_answer if last_answer else "Таймаут ожидания ответа"
 
     async def _get_latest_assistant_message(self):
@@ -701,6 +721,9 @@ class BrowserClient:
                 '[data-message-author-role="assistant"]',
                 '[data-testid*="conversation-turn"]:last-child [data-message-author-role="assistant"]',
                 '.group:has([data-message-author-role="assistant"])',
+                '[data-testid*="conversation-turn"]:last-child',
+                '.markdown',
+                '.prose',
             ]
 
             for selector in assistant_selectors:
@@ -708,14 +731,49 @@ class BrowserClient:
                     messages = await self.page.query_selector_all(selector)
                     if messages:
                         last_message = messages[-1]
+                        
+                        # Пробуем несколько способов извлечения текста
                         text_content = await last_message.text_content()
                         if text_content and text_content.strip():
-                            return text_content.strip()
+                            # Очищаем текст от лишних пробелов и переносов
+                            cleaned_text = ' '.join(text_content.strip().split())
+                            return cleaned_text
+                        
+                        # Если text_content не работает, пробуем innerText
+                        inner_text = await last_message.evaluate('element => element.innerText')
+                        if inner_text and inner_text.strip():
+                            cleaned_text = ' '.join(inner_text.strip().split())
+                            return cleaned_text
+                            
                 except Exception:
                     continue
 
+            # Если стандартные методы не работают, пробуем получить весь контент страницы
+            try:
+                # Ищем любой контент, который может быть ответом
+                content_selectors = [
+                    '.markdown',
+                    '.prose',
+                    '[class*="message"]',
+                    '[class*="content"]',
+                    '[class*="response"]',
+                ]
+                
+                for selector in content_selectors:
+                    elements = await self.page.query_selector_all(selector)
+                    if elements:
+                        # Берем последний элемент, который скорее всего содержит ответ
+                        last_element = elements[-1]
+                        text_content = await last_element.text_content()
+                        if text_content and len(text_content) > 100:  # Минимум 100 символов
+                            cleaned_text = ' '.join(text_content.strip().split())
+                            return cleaned_text
+            except Exception:
+                pass
+
             return ""
-        except Exception:
+        except Exception as e:
+            print(f"Ошибка при получении сообщения ассистента: {e}")
             return ""
 
     async def _is_chatgpt_typing(self):
@@ -748,8 +806,167 @@ class BrowserClient:
         """Возвращает статус аутентификации"""
         return self.auth_status
 
+    async def save_session_cookies(self) -> bool:
+        """Сохраняет cookies и состояние браузера в файл cookies.json"""
+        if not self.context:
+            print("❌ Контекст браузера не инициализирован")
+            return False
+
+        try:
+            # Получаем cookies из контекста
+            cookies = await self.context.cookies()
+            
+            # Получаем состояние страницы (URL и заголовок)
+            page_state = {
+                "url": self.page.url if self.page else "",
+                "title": await self.page.title() if self.page else ""
+            }
+            
+            # Сохраняем cookies и состояние в файл
+            session_data = {
+                "cookies": cookies,
+                "page_state": page_state,
+                "auth_status": self.auth_status,
+                "timestamp": asyncio.get_event_loop().time()
+            }
+            
+            with open("cookies.json", "w", encoding="utf-8") as f:
+                json.dump(session_data, f, indent=2, ensure_ascii=False)
+            
+            print("✅ Сессия успешно сохранена в cookies.json")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка при сохранении сессии: {e}")
+            return False
+
+    async def load_session_cookies(self) -> bool:
+        """Загружает cookies и состояние браузера из файла cookies.json"""
+        try:
+            # Проверяем существование файла
+            if not os.path.exists("cookies.json"):
+                print("ℹ️ Файл cookies.json не найден")
+                return False
+            
+            # Загружаем данные из файла
+            with open("cookies.json", "r", encoding="utf-8") as f:
+                session_data = json.load(f)
+            
+            # Восстанавливаем статус аутентификации
+            auth_status = session_data.get("auth_status", {})
+            if auth_status:
+                self.auth_status.update(auth_status)
+                print(f"✅ Восстановлен статус аутентификации: {auth_status.get('status', 'unknown')}")
+            
+            # Восстанавливаем cookies только если контекст уже инициализирован
+            if self.context:
+                cookies = session_data.get("cookies", [])
+                if cookies:
+                    await self.context.add_cookies(cookies)
+                    print(f"✅ Загружено {len(cookies)} cookies")
+            
+            print("✅ Сессия успешно загружена из cookies.json")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Ошибка при загрузке сессии: {e}")
+            return False
+
+    async def is_session_valid(self) -> bool:
+        """Проверяет валидность сохраненной сессии"""
+        try:
+            if not os.path.exists("cookies.json"):
+                return False
+            
+            # Загружаем данные сессии
+            with open("cookies.json", "r", encoding="utf-8") as f:
+                session_data = json.load(f)
+            
+            # Проверяем наличие необходимых данных
+            cookies = session_data.get("cookies", [])
+            auth_status = session_data.get("auth_status", {})
+            
+            if not cookies or not auth_status:
+                return False
+            
+            # Проверяем статус аутентификации
+            status = auth_status.get("status")
+            if status != "completed":
+                return False
+            
+            print("✅ Сессия валидна")
+            return True
+            
+        except Exception:
+            return False
+
+    async def initialize_with_session(self) -> bool:
+        """Инициализирует браузер с восстановлением сессии"""
+        try:
+            # Сначала проверяем наличие валидной сессии
+            if await self.is_session_valid():
+                print("🔄 Восстанавливаем сессию...")
+                # Инициализируем браузер
+                await self.initialize()
+                
+                # Загружаем cookies после инициализации
+                await self.load_session_cookies()
+                
+                # Открываем ChatGPT с восстановленными cookies
+                await self.open_chatgpt()
+                print("✅ Сессия успешно восстановлена")
+                return True
+            else:
+                # Если сессия невалидна или не найдена, выполняем полную инициализацию
+                print("🔄 Выполняем полную инициализацию браузера")
+                await self.initialize()
+                await self.open_chatgpt()
+                return False
+            
+        except Exception as e:
+            print(f"❌ Ошибка при инициализации с сессией: {e}")
+            # В случае ошибки выполняем полную инициализацию
+            await self.initialize()
+            await self.open_chatgpt()
+            return False
+
+    async def send_and_get_answer_with_reconnect(self, prompt: str, max_retries: int = 3) -> str:
+        """Отправляет запрос с автоматическим переподключением при ошибках"""
+        for attempt in range(max_retries):
+            try:
+                print(f"🔄 Попытка {attempt + 1}/{max_retries}")
+                
+                # Пытаемся отправить запрос
+                result = await self.send_and_get_answer(prompt)
+                
+                # Проверяем результат на ошибки
+                if "Ошибка" not in result and "Таймаут" not in result:
+                    # Сохраняем сессию после успешного запроса
+                    await self.save_session_cookies()
+                    return result
+                
+                print(f"❌ Ошибка в ответе: {result}")
+                
+            except Exception as e:
+                print(f"❌ Исключение при отправке запроса: {e}")
+            
+            # Если это не последняя попытка, перезапускаем браузер
+            if attempt < max_retries - 1:
+                print("🔄 Перезапускаем браузер...")
+                await self.close()
+                await self.initialize_with_session()
+                await asyncio.sleep(2)  # Пауза перед следующей попыткой
+        
+        return "❌ Не удалось выполнить запрос после всех попыток"
+
     async def close(self):
-        """Закрывает браузер"""
+        """Закрывает браузер и сохраняет сессию"""
+        try:
+            # Сохраняем сессию перед закрытием
+            await self.save_session_cookies()
+        except Exception as e:
+            print(f"⚠️ Не удалось сохранить сессию при закрытии: {e}")
+        
         if self.browser:
             await self.browser.close()
         if self.playwright:
